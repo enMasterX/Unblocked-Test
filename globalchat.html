@@ -1,0 +1,130 @@
+<!-- globalchat.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Global Chat</title>
+  <style>
+    body { background:#ad75d8; margin:0; font-family:Arial,sans-serif; text-align:center; }
+    .title { font-size:80px; color:#1f1d9c; margin:20px 0; }
+    #chat-container { background:#fff; max-width:600px; margin:30px auto; padding:20px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.1); text-align:left; }
+    #messages { list-style:none; padding:0; height:200px; overflow-y:auto; border-bottom:1px solid #ddd; margin-bottom:10px; }
+    input { width:80%; padding:5px; margin-bottom:5px; }
+    button { padding:5px 10px; background:#1f1d9c; color:#fff; border:none; cursor:pointer; }
+    button:hover { background:#3533d9; }
+  </style>
+</head>
+<body>
+  <h1 class="title">Global Chat</h1>
+  <div id="chat-container">
+    <div id="loginSection">
+      <input id="username" placeholder="Username" /><br/>
+      <input id="password" type="password" placeholder="Password" /><br/>
+      <button id="loginBtn">Login</button>
+    </div>
+    <div id="chatSection" style="display:none;">
+      <ul id="messages"></ul>
+      <input id="message" placeholder="Type a message" maxlength="200" />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <script src="https://chat-server-9sdl.onrender.com/socket.io/socket.io.js"></script>
+  <script>
+    // Toggle this to true to require username/password, false to skip login
+    const REQUIRE_LOGIN = false;
+
+    const specialUsers = ["King Admin", "Burkes", "enMasterX", "Server"];
+    var socket = io("https://chat-server-9sdl.onrender.com", {
+      transports: ["websocket"],
+      withCredentials: true
+    });
+
+    let currentUser = null;
+    let showUsernames = false;
+
+    // When toggle changes from server
+    socket.on("username-display-status", flag => {
+      showUsernames = flag;
+      loadMessages();
+    });
+
+    socket.on("connect", () => console.log("🔗 Connected as", socket.id));
+    socket.on("chatReset", () => {
+      document.getElementById("messages").innerHTML = "";
+      console.log("🔄 Chat was reset");
+    });
+
+    window.onload = () => {
+      if (!REQUIRE_LOGIN) {
+        currentUser = "Anonymous";
+        document.getElementById("loginSection").style.display = "none";
+        document.getElementById("chatSection").style.display = "block";
+        loadMessages();
+      }
+    };
+
+    function safeString(raw) {
+      return (typeof raw === 'string') ? raw : String(raw);
+    }
+
+    function renderMessage(obj) {
+      // Show username only if enabled and login is required
+      const displayUsername = showUsernames && REQUIRE_LOGIN;
+      const text = displayUsername ? `${obj.username}: ${obj.message}` : obj.message;
+      const li = document.createElement("li");
+      li.textContent = text;
+      if (specialUsers.includes(obj.username)) li.style.color = "red";
+      return li;
+    }
+
+    function loginUser() {
+      const u = document.getElementById("username").value.trim();
+      const p = document.getElementById("password").value.trim();
+      if (!u || !p) { alert("Enter both fields"); return; }
+
+      if (REQUIRE_LOGIN) {
+        socket.emit("authenticateChatUser", { username: u, password: p }, res => {
+          if (res.success) {
+            currentUser = res.username;
+            document.getElementById("loginSection").style.display = "none";
+            document.getElementById("chatSection").style.display = "block";
+            loadMessages();
+          } else {
+            alert("Login failed");
+          }
+        });
+      }
+    }
+
+    function loadMessages() {
+      socket.emit("requestMessages");
+    }
+
+    function sendMessage() {
+      const text = document.getElementById("message").value.trim().slice(0, 200);
+      if (!text) return;
+      const usernameToSend = currentUser || "Anonymous";
+      socket.emit("message", { username: usernameToSend, message: text });
+      document.getElementById("message").value = "";
+    }
+
+    socket.on("previousMessages", msgs => {
+      const c = document.getElementById("messages");
+      c.innerHTML = "";
+      msgs.forEach(obj => c.appendChild(renderMessage(obj)));
+      c.scrollTop = c.scrollHeight;
+    });
+
+    socket.on("message", obj => {
+      const c = document.getElementById("messages");
+      c.appendChild(renderMessage(obj));
+      c.scrollTop = c.scrollHeight;
+    });
+
+    document.getElementById("loginBtn").addEventListener("click", loginUser);
+    document.getElementById("sendBtn").addEventListener("click", sendMessage);
+  </script>
+</body>
+</html>

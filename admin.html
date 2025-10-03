@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Admin Panel</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px; }
+    #login, #panel { max-width:600px; margin:20px auto; padding:20px; background:#fff; border-radius:8px; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    input, button { width:100%; padding:10px; margin-top:10px; box-sizing:border-box; }
+    table { width:100%; border-collapse:collapse; margin-top:20px; }
+    th,td { border:1px solid #ddd; padding:8px; text-align:left; vertical-align:middle; }
+    .toggle { margin-top:20px; display:flex; align-items:center; }
+    .toggle label { margin-left:8px; }
+    /* Blur effect for passwords */
+    .password-cell { filter: blur(5px); cursor: pointer; user-select: none; }
+    .password-cell.unblurred { filter: none; }
+    .actions button { margin-right:6px; width: auto; display:inline-block; padding:6px 10px; cursor:pointer; }
+    .small { width: auto; padding:6px 10px; box-sizing: border-box; }
+    .muted { color:#666; font-size:0.9em; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <h2>Admin Login</h2>
+    <input id="adminPassword" type="password" placeholder="Admin password" />
+    <button onclick="adminLogin()">Login</button>
+    <p id="loginMsg" style="color:red;"></p>
+  </div>
+
+  <div id="panel" style="display:none;">
+    <h2>User Management</h2>
+    <button onclick="refreshUsers()">⟳ Refresh User List</button>
+    <table>
+      <thead>
+        <tr><th>Username</th><th>Password</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="userTable"></tbody>
+    </table>
+
+    <h3>Add User</h3>
+    <input id="newUser" placeholder="Username" />
+    <input id="newPass" type="password" placeholder="Password" />
+    <button onclick="addUser()">Add</button>
+    <p id="adminMsg" class="muted"></p>
+
+    <a href="https://dashboard.render.com/web/srv-cvjm7as9c44c73cc6n1g/deploys/dep-d1qna9gdl3ps738a4pbg" target="_blank">Render Server Logs</a>
+
+    <div class="toggle">
+      <input type="checkbox" id="toggleUsernames" onchange="toggleUsernames()" />
+      <label for="toggleUsernames">Show “username: message” in Global Chat</label>
+    </div>
+  </div>
+
+  <script src="https://chat-server-9sdl.onrender.com/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io("https://chat-server-9sdl.onrender.com", {
+      transports: ["websocket"],
+      withCredentials: true
+    });
+
+    // Sync toggle UI to server state
+    socket.on("username-display-status", status => {
+      document.getElementById("toggleUsernames").checked = !!status;
+    });
+
+    // Admin login
+    function adminLogin() {
+      const pwd = document.getElementById("adminPassword").value;
+      document.getElementById("loginMsg").textContent = "";
+      socket.emit("authenticate", pwd, res => {
+        if (res.success) {
+          document.getElementById("login").style.display = "none";
+          document.getElementById("panel").style.display = "block";
+          refreshUsers();
+        } else {
+          document.getElementById("loginMsg").textContent = "Invalid password";
+        }
+      });
+    }
+
+    // Request users
+    function refreshUsers() {
+      socket.emit("get-users");
+    }
+
+    // Render user list when server sends it
+    socket.on("userList", list => {
+      const tbody = document.getElementById("userTable");
+      tbody.innerHTML = "";
+      list.forEach(u => {
+        tbody.appendChild(createUserRow(u));
+      });
+    });
+
+    // Create a table row for a user (normal display)
+    function createUserRow(u) {
+      const tr = document.createElement("tr");
+
+      const tdUser = document.createElement("td");
+      tdUser.textContent = u.username;
+      tr.appendChild(tdUser);
+
+      const tdPass = document.createElement("td");
+      tdPass.textContent = u.password;
+      tdPass.className = "password-cell";
+      tdPass.title = "Click to reveal";
+      tdPass.addEventListener("click", () => tdPass.classList.toggle("unblurred"));
+      tr.appendChild(tdPass);
+
+      const tdActions = document.createElement("td");
+      tdActions.className = "actions";
+
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.className = "small";
+      editBtn.addEventListener("click", () => startEdit(tr, u));
+      tdActions.appendChild(editBtn);
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Delete";
+      delBtn.className = "small";
+      delBtn.addEventListener("click", () => deleteUser(u.username));
+      tdActions.appendChild(delBtn);
+
+      tr.appendChild(tdActions);
+      return tr;
+    }
+
+    // Start editing a user: replace the row with input fields and Save/Cancel
+    function startEdit(tr, u) {
+      // Build edit UI
+      tr.innerHTML = "";
+
+      const tdUser = document.createElement("td");
+      const userInput = document.createElement("input");
+      userInput.value = u.username;
+      userInput.style.width = "100%";
+      tdUser.appendChild(userInput);
+      tr.appendChild(tdUser);
+
+      const tdPass = document.createElement("td");
+      const passInput = document.createElement("input");
+      passInput.type = "password";
+      passInput.value = u.password;
+      passInput.style.width = "100%";
+      tdPass.appendChild(passInput);
+      tr.appendChild(tdPass);
+
+      const tdActions = document.createElement("td");
+
+      const saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      saveBtn.className = "small";
+      saveBtn.addEventListener("click", () => {
+        const newUsername = userInput.value.trim();
+        const newPassword = passInput.value;
+        if (!newUsername || !newPassword) return alert("Fill both fields");
+        socket.emit("edit-user", { oldUsername: u.username, newUsername, newPassword }, res => {
+          if (res.success) {
+            refreshUsers();
+            document.getElementById("adminMsg").textContent = "User updated.";
+            setTimeout(()=> document.getElementById("adminMsg").textContent = "", 2000);
+          } else {
+            alert("Edit failed (maybe username taken?)");
+            refreshUsers();
+          }
+        });
+      });
+      tdActions.appendChild(saveBtn);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.className = "small";
+      cancelBtn.addEventListener("click", () => refreshUsers());
+      tdActions.appendChild(cancelBtn);
+
+      tr.appendChild(tdActions);
+    }
+
+    // Add user
+    function addUser() {
+      const u = document.getElementById("newUser").value.trim();
+      const p = document.getElementById("newPass").value.trim();
+      if (!u || !p) return alert("Fill both fields");
+      socket.emit("add-user", { user: u, pwd: p }, res => {
+        if (res && res.success) {
+          document.getElementById("adminMsg").textContent = "User added";
+          document.getElementById("newUser").value = "";
+          document.getElementById("newPass").value = "";
+        } else {
+          document.getElementById("adminMsg").textContent = "Add failed";
+        }
+        setTimeout(()=> document.getElementById("adminMsg").textContent = "", 2000);
+        refreshUsers();
+      });
+    }
+
+    // Delete user
+    function deleteUser(u) {
+      if (!confirm(`Delete user ${u}?`)) return;
+      socket.emit("delete-user", u, res => {
+        if (!res.success) alert("Delete failed");
+        refreshUsers();
+      });
+    }
+
+    // Toggle usernames in chat
+    function toggleUsernames() {
+      const flag = document.getElementById("toggleUsernames").checked;
+      socket.emit("set-username-display", flag);
+    }
+
+    // Connection logging for debugging
+    socket.on("connect", () => console.log("Admin socket connected:", socket.id));
+    socket.on("disconnect", () => console.log("Admin socket disconnected"));
+  </script>
+</body>
+</html>
